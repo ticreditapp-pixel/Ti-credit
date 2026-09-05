@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ti-Credit</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: #f2f5fa; margin: 0; color: #172033; }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 20px 16px 60px; }
+  .center-wrap { max-width: 380px; margin: 60px auto; padding: 0 16px; }
+  .card { background: #fff; border-radius: 16px; padding: 20px; box-shadow: 0 2px 10px rgba(20,30,60,0.06); margin-bottom: 14px; }
+  .brand { font-size: 26px; font-weight: 800; color: #2457d6; text-align: center; margin-bottom: 4px; }
+  .sub { text-align: center; color: #6b7686; font-size: 13px; margin-bottom: 20px; }
+  input, select, button { width: 100%; padding: 12px 14px; margin-top: 8px; border-radius: 10px; font-size: 15px; }
+  input, select { border: 1px solid #d7dde6; background: #fafbfd; }
+  button { border: 0; background: #2457d6; color: #fff; font-weight: 700; cursor: pointer; }
+  button.secondary { background: #eaf0fc; color: #2457d6; }
+  button.danger { background: #fdeceb; color: #c0392b; }
+  button.success { background: #e8f8ee; color: #1f8a4d; }
+  button.ghost { background: transparent; color: #2457d6; border: 1px solid #d7dde6; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 6px; }
+  .tabs button { background: #eef1f6; color: #495164; padding: 10px; font-size: 13px; margin-top: 0; }
+  .tabs button.on { background: #2457d6; color: #fff; }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat { border-radius: 12px; padding: 12px 14px; }
+  .stat .lbl { font-size: 12px; opacity: 0.8; margin: 0; }
+  .stat .val { font-size: 20px; font-weight: 800; margin: 4px 0 0; }
+  .stat.blue { background: #eaf0fc; color: #1d4ed8; }
+  .stat.green { background: #e8f8ee; color: #15803d; }
+  .stat.amber { background: #fef6e6; color: #b45309; }
+  .stat.red { background: #fdeceb; color: #b91c1c; }
+  .item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid #edf0f4; border-radius: 10px; margin-top: 8px; background: #fff; }
+  .item .name { font-size: 14px; font-weight: 600; margin: 0; }
+  .item .meta { font-size: 12px; color: #8a93a3; margin: 2px 0 0; }
+  .badge { font-size: 11px; padding: 3px 9px; border-radius: 20px; font-weight: 700; }
+  .badge.on { background: #e8f8ee; color: #15803d; }
+  .badge.off { background: #fdeceb; color: #b91c1c; }
+  .badge.warn { background: #fef6e6; color: #b45309; }
+  .err { color: #c0392b; font-size: 13px; margin-top: 8px; display: none; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .topbar h2 { font-size: 18px; margin: 0; }
+  .topbar .meta { font-size: 12px; color: #8a93a3; margin: 0; }
+  .section-title { font-size: 14px; font-weight: 700; margin: 18px 0 8px; }
+  .muted { color: #8a93a3; font-size: 13px; }
+  .loading { text-align: center; padding: 40px 0; color: #8a93a3; }
+  a.linkbtn { display: inline-block; margin-top: 10px; font-size: 13px; color: #2457d6; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="app"><div class="loading">Loading...</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyCIVH3drvQgpm9DxOtZMFvtueHeKwpH-_g",
+  authDomain: "ti-credit-55348.firebaseapp.com",
+  projectId: "ti-credit-55348",
+  storageBucket: "ti-credit-55348.firebasestorage.app",
+  messagingSenderId: "876619626672",
+  appId: "1:876619626672:web:4074624bdd6ccfbcdb6375"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+// secondary app instance so admin can create shop logins without losing their own session
+const secondaryApp = firebase.initializeApp(firebaseConfig, "Secondary");
+const secondaryAuth = secondaryApp.auth();
+
+const app = document.getElementById('app');
+function fmt(n) { return '₹' + Math.round(n || 0).toLocaleString('en-IN'); }
+function isToday(ts) {
+  if (!ts) return false;
+  const d = new Date(ts), n = new Date();
+  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+}
+function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild; }
+
+// ---------- AUTH STATE ----------
+auth.onAuthStateChanged(async (user) => {
+  if (!user) { renderLogin(); return; }
+  app.innerHTML = '<div class="loading">Checking account...</div>';
+  try {
+    const adminDoc = await db.collection('admins').doc(user.uid).get();
+    if (adminDoc.exists) { renderAdmin(); return; }
+    const shopDoc = await db.collection('shops').doc(user.uid).get();
+    if (shopDoc.exists) {
+      const shop = shopDoc.data();
+      if (shop.active === false) {
+        await auth.signOut();
+        renderLogin('Your access is deactivated. Contact admin.');
+        return;
+      }
+      renderShop(user.uid, false);
+      return;
+    }
+    await auth.signOut();
+    renderLogin('This account is not set up. Contact admin.');
+  } catch (e) {
+    renderLogin('Error checking account: ' + e.message);
+  }
+});
+
+// ---------- LOGIN ----------
+function renderLogin(errMsg) {
+  app.innerHTML = '';
+  const wrap = el(`
+    <div class="center-wrap">
+      <div class="card">
+        <p class="brand">Ti-Credit</p>
+        <p class="sub">Shop sales and payment tracker</p>
+        <input type="email" id="li-email" placeholder="Email" autocomplete="username">
+        <input type="password" id="li-pass" placeholder="Password" autocomplete="current-password">
+        <button id="li-btn">Log in</button>
+        <div class="err" id="li-err"></div>
+      </div>
+    </div>
+  `);
+  app.appendChild(wrap);
+  const errEl = wrap.querySelector('#li-err');
+  if (errMsg) { errEl.textContent = errMsg; errEl.style.display = 'block'; }
+  wrap.querySelector('#li-btn').onclick = async () => {
+    const email = wrap.querySelector('#li-email').value.trim();
+    const pass = wrap.querySelector('#li-pass').value;
+    if (!email || !pass) { errEl.textContent = 'Enter email and password.'; errEl.style.display = 'block'; return; }
+    errEl.style.display = 'none';
+    wrap.querySelector('#li-btn').textContent = 'Logging in...';
+    try {
+      await auth.signInWithEmailAndPassword(email, pass);
+    } catch (e) {
+      errEl.textContent = 'Login failed: ' + (e.message || e.code);
+      errEl.style.display = 'block';
+      wrap.querySelector('#li-btn').textContent = 'Log in';
+    }
+  };
+}
+
+// ---------- ADMIN ----------
+async function renderAdmin() {
+  app.innerHTML = '<div class="loading">Loading shops...</div>';
+  const snap = await db.collection('shops').orderBy('createdAt', 'desc').get();
+  const shops = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  const wrap = el(`<div class="wrap"></div>`);
+  wrap.appendChild(el(`
+    <div class="topbar">
+      <div><h2>Admin dashboard</h2><p class="meta">${shops.length} shop(s)</p></div>
+      <button class="ghost" id="logout-btn" style="width:auto;padding:8px 14px;">Log out</button>
+    </div>
+  `));
+  wrap.querySelector('#logout-btn').onclick = () => auth.signOut();
+
+  const activeCount = shops.filter(s => s.active !== false).length;
+  const dueTotal = shops.reduce((s, x) => s + (x.subscriptionStatus === 'due' ? (x.subscriptionAmount || 0) : 0), 0);
+  wrap.appendChild(el(`
+    <div class="stat-grid">
+      <div class="stat blue"><p class="lbl">Total shops</p><p class="val">${shops.length}</p></div>
+      <div class="stat green"><p class="lbl">Active shops</p><p class="val">${activeCount}</p></div>
+      <div class="stat red" style="grid-column:span 2;"><p class="lbl">Subscription due to you</p><p class="val">${fmt(dueTotal)}</p></div>
+    </div>
+  `));
+
+  const addBtn = el(`<button style="margin-top:16px;">+ Add new shop</button>`);
+  wrap.appendChild(addBtn);
+  const formHolder = el(`<div></div>`);
+  wrap.appendChild(formHolder);
+
+  addBtn.onclick = () => {
+    formHolder.innerHTML = '';
+    const f = el(`
+      <div class="card">
+        <input id="ns-name" placeholder="Shop name">
+        <input id="ns-owner" placeholder="Owner name">
+        <input id="ns-mobile" type="tel" placeholder="Owner mobile number">
+        <input id="ns-email" type="email" placeholder="Login email">
+        <input id="ns-pass" placeholder="Login password (min 6 characters)">
+        <input id="ns-fee" type="number" placeholder="Monthly subscription amount (Rs)">
+        <div class="err" id="ns-err"></div>
+        <button id="ns-save">Create shop account</button>
+      </div>
+    `);
+    formHolder.appendChild(f);
+    f.querySelector('#ns-save').onclick = async () => {
+      const name = f.querySelector('#ns-name').value.trim();
+      const owner = f.querySelector('#ns-owner').value.trim();
+      const mobile = f.querySelector('#ns-mobile').value.trim();
+      const email = f.querySelector('#ns-email').value.trim();
+      const pass = f.querySelector('#ns-pass').value;
+      const fee = parseFloat(f.querySelector('#ns-fee').value);
+      const errEl = f.querySelector('#ns-err');
+      if (!name || !owner || !mobile || !email || !pass || pass.length < 6 || isNaN(fee) || fee < 0) {
+        errEl.textContent = 'Fill all fields correctly (password min 6 chars).'; errEl.style.display = 'block'; return;
+      }
+      errEl.style.display = 'none';
+      f.querySelector('#ns-save').textContent = 'Creating...';
+      try {
+        const cred = await secondaryAuth.createUserWithEmailAndPassword(email, pass);
+        const uid = cred.user.uid;
+        await db.collection('shops').doc(uid).set({
+          shopName: name, ownerName: owner, mobile, email,
+          active: true, subscriptionAmount: fee, subscriptionStatus: 'due',
+          createdAt: Date.now()
+        });
+        await secondaryAuth.signOut();
+        renderAdmin();
+      } catch (e) {
+        errEl.textContent = 'Error: ' + e.message; errEl.style.display = 'block';
+        f.querySelector('#ns-save').textContent = 'Create shop account';
+      }
+    };
+  };
+
+  wrap.appendChild(el(`<p class="section-title">All shops</p>`));
+  if (shops.length === 0) wrap.appendChild(el(`<p class="muted">No shops yet. Add one above.</p>`));
+
+  for (const shop of shops) {
+    const card = el(`
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <p class="name" style="font-size:15px;">${shop.shopName}</p>
+            <p class="meta">${shop.ownerName} · ${shop.mobile}</p>
+          </div>
+          <span class="badge ${shop.active !== false ? 'on' : 'off'}">${shop.active !== false ? 'Active' : 'Deactivated'}</span>
+        </div>
+        <div style="margin-top:8px;">
+          <span class="badge ${shop.subscriptionStatus === 'paid' ? 'on' : 'warn'}">${shop.subscriptionStatus === 'paid' ? 'Fee paid' : 'Fee due ' + fmt(shop.subscriptionAmount)}</span>
+        </div>
+        <div class="row" style="margin-top:12px;">
+          <button class="secondary view-btn">View data</button>
+          <button class="${shop.subscriptionStatus === 'paid' ? 'ghost' : 'success'} paid-btn">${shop.subscriptionStatus === 'paid' ? 'Mark due' : 'Mark paid'}</button>
+          <button class="${shop.active !== false ? 'danger' : 'success'} toggle-btn">${shop.active !== false ? 'Deactivate' : 'Activate'}</button>
+        </div>
+      </div>
+    `);
+    wrap.appendChild(card);
+    card.querySelector('.view-btn').onclick = () => renderShop(shop.id, true);
+    card.querySelector('.paid-btn').onclick = async () => {
+      await db.collection('shops').doc(shop.id).update({
+        subscriptionStatus: shop.subscriptionStatus === 'paid' ? 'due' : 'paid'
+      });
+      renderAdmin();
+    };
+    card.querySelector('.toggle-btn').onclick = async () => {
+      await db.collection('shops').doc(shop.id).update({ active: shop.active === false ? true : false });
+      renderAdmin();
+    };
+  }
+
+  app.innerHTML = '';
+  app.appendChild(wrap);
+}
+
+// ---------- SHOP ----------
+async function renderShop(shopId, isAdminView) {
+  app.innerHTML = '<div class="loading">Loading shop data...</div>';
+  const shopDoc = await db.collection('shops').doc(shopId).get();
+  const shop = shopDoc.data();
+  const custSnap = await db.collection('shops').doc(shopId).collection('customers').orderBy('createdAt', 'desc').get();
+  const customers = custSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const txnSnap = await db.collection('shops').doc(shopId).collection('txns').orderBy('ts', 'desc').limit(200).get();
+  const txns = txnSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  function custBalance(custId) {
+    let sale = 0, pay = 0;
+    txns.filter(t => t.custId === custId).forEach(t => { if (t.type === 'sale') sale += t.amount; else pay += t.amount; });
+    return sale - pay;
+  }
+
+  const wrap = el(`<div class="wrap"></div>`);
+  wrap.appendChild(el(`
+    <div class="topbar">
+      <div><h2>${shop.shopName}</h2><p class="meta">${shop.ownerName}</p></div>
+      <button class="ghost" id="back-btn" style="width:auto;padding:8px 14px;">${isAdminView ? '← Admin' : 'Log out'}</button>
+    </div>
+  `));
+  wrap.querySelector('#back-btn').onclick = () => isAdminView ? renderAdmin() : auth.signOut();
+
+  let todaySale = 0, todayPay = 0, totalSale = 0;
+  txns.forEach(t => {
+    if (t.type === 'sale') { totalSale += t.amount; if (isToday(t.ts)) todaySale += t.amount; }
+    else if (isToday(t.ts)) todayPay += t.amount;
+  });
+  const totalDue = customers.reduce((s, c) => s + custBalance(c.id), 0);
+
+  wrap.appendChild(el(`
+    <div class="stat-grid">
+      <div class="stat blue"><p class="lbl">Today's sale</p><p class="val">${fmt(todaySale)}</p></div>
+      <div class="stat green"><p class="lbl">Today's payment</p><p class="val">${fmt(todayPay)}</p></div>
+      <div class="stat amber"><p class="lbl">Total sale</p><p class="val">${fmt(totalSale)}</p></div>
+      <div class="stat red"><p class="lbl">Total balance due</p><p class="val">${fmt(totalDue)}</p></div>
+    </div>
+  `));
+
+  if (!isAdminView) {
+    const tabs = el(`
+      <div class="tabs" style="margin-top:16px;">
+        <button class="on" id="tab-txn">Sale / Payment</button>
+        <button id="tab-cust">New customer</button>
+      </div>
+    `);
+    wrap.appendChild(tabs);
+
+    const custForm = el(`
+      <div class="card" id="panel-cust" style="display:none;">
+        <input id="cf-name" placeholder="Customer name">
+        <input id="cf-mobile" type="tel" placeholder="Mobile number">
+        <div class="err" id="cf-err"></div>
+        <button id="cf-save">Add customer</button>
+      </div>
+    `);
+    wrap.appendChild(custForm);
+
+    const txnForm = el(`
+      <div class="card" id="panel-txn">
+        <select id="txn-cust">
+          ${customers.length ? customers.map(c => `<option value="${c.id}">${c.name} (${c.mobile})</option>`).join('') : '<option value="">Add a customer first</option>'}
+        </select>
+        <div class="row" style="margin-top:8px;">
+          <button class="on" id="type-sale" style="background:#2457d6;color:#fff;">Sale</button>
+          <button id="type-payment" style="background:#eef1f6;color:#495164;">Payment received</button>
+        </div>
+        <input id="txn-amount" type="number" placeholder="Amount (Rs)">
+        <div class="err" id="txn-err"></div>
+        <button id="txn-save">Add entry</button>
+      </div>
+    `);
+    wrap.appendChild(txnForm);
+
+    let currentType = 'sale';
+    function paintType() {
+      txnForm.querySelector('#type-sale').style.background = currentType === 'sale' ? '#2457d6' : '#eef1f6';
+      txnForm.querySelector('#type-sale').style.color = currentType === 'sale' ? '#fff' : '#495164';
+      txnForm.querySelector('#type-payment').style.background = currentType === 'payment' ? '#2457d6' : '#eef1f6';
+      txnForm.querySelector('#type-payment').style.color = currentType === 'payment' ? '#fff' : '#495164';
+    }
+    txnForm.querySelector('#type-sale').onclick = () => { currentType = 'sale'; paintType(); };
+    txnForm.querySelector('#type-payment').onclick = () => { currentType = 'payment'; paintType(); };
+
+    tabs.querySelector('#tab-cust').onclick = () => {
+      custForm.style.display = 'block'; txnForm.style.display = 'none';
+      tabs.querySelector('#tab-cust').className = 'on'; tabs.querySelector('#tab-txn').className = '';
+    };
+    tabs.querySelector('#tab-txn').onclick = () => {
+      custForm.style.display = 'none'; txnForm.style.display = 'block';
+      tabs.querySelector('#tab-txn').className = 'on'; tabs.querySelector('#tab-cust').className = '';
+    };
+
+    custForm.querySelector('#cf-save').onclick = async () => {
+      const name = custForm.querySelector('#cf-name').value.trim();
+      const mobile = custForm.querySelector('#cf-mobile').value.trim();
+      const errEl = custForm.querySelector('#cf-err');
+      if (!name || !mobile) { errEl.textContent = 'Enter name and mobile.'; errEl.style.display = 'block'; return; }
+      errEl.style.display = 'none';
+      await db.collection('shops').doc(shopId).collection('customers').add({ name, mobile, createdAt: Date.now() });
+      renderShop(shopId, isAdminView);
+    };
+
+    txnForm.querySelector('#txn-save').onclick = async () => {
+      const custId = txnForm.querySelector('#txn-cust').value;
+      const amount = parseFloat(txnForm.querySelector('#txn-amount').value);
+      const errEl = txnForm.querySelector('#txn-err');
+      if (!custId) { errEl.textContent = 'Select a customer first.'; errEl.style.display = 'block'; return; }
+      if (isNaN(amount) || amount <= 0) { errEl.textContent = 'Enter a valid amount.'; errEl.style.display = 'block'; return; }
+      errEl.style.display = 'none';
+      await db.collection('shops').doc(shopId).collection('txns').add({ custId, type: currentType, amount, ts: Date.now() });
+      renderShop(shopId, isAdminView);
+    };
+  }
+
+  wrap.appendChild(el(`<p class="section-title">Customer-wise balance</p>`));
+  if (customers.length === 0) wrap.appendChild(el(`<p class="muted">No customers yet.</p>`));
+  customers.forEach(c => {
+    const due = custBalance(c.id);
+    wrap.appendChild(el(`
+      <div class="item">
+        <div><p class="name">${c.name}</p><p class="meta">${c.mobile}</p></div>
+        <span class="badge ${due > 0 ? 'off' : 'on'}">${due > 0 ? 'Due ' + fmt(due) : 'Clear'}</span>
+      </div>
+    `));
+  });
+
+  wrap.appendChild(el(`<p class="section-title">Recent entries</p>`));
+  if (txns.length === 0) wrap.appendChild(el(`<p class="muted">No entries yet.</p>`));
+  txns.slice(0, 15).forEach(t => {
+    const c = customers.find(x => x.id === t.custId);
+    wrap.appendChild(el(`
+      <div class="item">
+        <div><p class="name">${c ? c.name : 'Unknown'}</p><p class="meta">${t.type === 'sale' ? 'Sale' : 'Payment'}</p></div>
+        <span style="font-weight:700;color:${t.type === 'sale' ? '#15803d' : '#2457d6'};">${t.type === 'sale' ? '+' : '-'}${fmt(t.amount)}</span>
+      </div>
+    `));
+  });
+
+  app.innerHTML = '';
+  app.appendChild(wrap);
+}
+</script>
+</body>
+</html>
